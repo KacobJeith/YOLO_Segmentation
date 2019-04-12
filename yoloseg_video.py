@@ -197,17 +197,44 @@ def displayResults(wait, im1, im2):
     numpy_horizontal = np.hstack((im1, im2))
     numpy_horizontal_concat = np.concatenate((im1, im2), axis=1)
     cv2.namedWindow('display', cv2.WINDOW_NORMAL)
-    cv2.resizeWindow('display', 1600, 900)
+    cv2.resizeWindow('display', 2000, 800)
     cv2.imshow('display', numpy_horizontal_concat)
 
     if wait :
         cv2.waitKey()
+
+def drawLargestContour(segmented) :
+    
+    binary = cv2.cvtColor(segmented, cv2.COLOR_BGR2GRAY)
+    contours, hierarchy = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Find object with the biggest bounding box
+    mx = (0,0,0,0)      # biggest bounding box so far
+    mx_area = 0
+    max_index = 0
+    for index, cont in enumerate(contours):
+        x,y,w,h = cv2.boundingRect(cont)
+        area = w*h
+        if area > mx_area:
+            mx = x,y,w,h
+            mx_area = area
+            max_index = index
+
+    # x,y,w,h = mx
+    cv2.drawContours(segmented, contours, max_index, (0,0,255))
+
+    # cv2.rectangle(segmented,(x,y),(x+w,y+h),(200,0,0),2)
+
+    return segmented
+
 
 def processVideo(yolo_instance, sess, network, net_input, label_values):
 
     cap = cv2.VideoCapture(args.video)
     results_video, length = initializeVideo(cap)
     bar = startProgressBar(length)
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 2500)
     success, frame = cap.read()
 
     frameIndex = 0
@@ -221,13 +248,14 @@ def processVideo(yolo_instance, sess, network, net_input, label_values):
             break
         
         segmentation_result = predictOnFrame(sess, network, net_input, frame, label_values)
-        # segmentation_overlay = combineFrameAndLabels(frame, segmentation_result)
+        seg_bound = drawLargestContour(segmentation_result)
 
-        yolo_result = yolo_instance.detect_image(Image.fromarray(frame))
+        segmentation_overlay = combineFrameAndLabels(frame, seg_bound)
+        # yolo_result = yolo_instance.detect_image(Image.fromarray(frame), True)
 
-        everything = combineFrameAndLabels(np.array(yolo_result) , segmentation_result)
+        # everything = combineFrameAndLabels(np.array(yolo_result) , segmentation_result)
         
-        displayResults(False, frame, everything)
+        displayResults(True, frame, segmentation_overlay)
 
         # results_video.write(yolo_result)
 
@@ -240,7 +268,15 @@ if __name__ == '__main__':
 
     processVideo(yolo_instance, sess, network, net_input, label_values)
     # segmentVideo(sess, network, net_input, label_values)
-    print('SUCCESSFULLY COPIED FUNCTIONS TOGETHER')
+    print('Closing GPU Sessions...')
+
+    sess.close()
+    yolo_instance.close_session()
+
+    print('Mission Accomplished')
+
+
+
 
 # image = utils.load_image(args.image)
 # result = predictOnFrame(sess, network, net_input, image)

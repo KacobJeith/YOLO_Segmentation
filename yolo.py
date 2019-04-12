@@ -99,8 +99,7 @@ class YOLO(object):
                 score_threshold=self.score, iou_threshold=self.iou)
         return boxes, scores, classes
 
-    def detect_image(self, image):
-        start = timer()
+    def detect_image(self, image, drawBoxes=True):
 
         if self.model_image_size != (None, None):
             assert self.model_image_size[0]%32 == 0, 'Multiples of 32 required'
@@ -124,6 +123,14 @@ class YOLO(object):
                 K.learning_phase(): 0
             })
 
+        print('Found {} boxes for {}'.format(len(out_boxes), 'img'))
+
+        if drawBoxes :
+            image = self.drawBoxesOnImage(image, out_boxes, out_scores, out_classes)
+
+        return image
+
+    def drawBoxesOnImage(self, image, out_boxes, out_scores, out_classes) :
         print('Found {} boxes for {}'.format(len(out_boxes), 'img'))
 
         font = ImageFont.truetype(font='font/FiraMono-Medium.otf',
@@ -162,8 +169,6 @@ class YOLO(object):
             draw.text(text_origin, label, fill=(0, 0, 0), font=font)
             del draw
 
-        end = timer()
-        print(end - start)
         return image
 
     def close_session(self):
