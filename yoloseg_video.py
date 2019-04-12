@@ -210,7 +210,7 @@ def displayFourResults(wait, im1, im2, im3, im4):
     if wait :
         cv2.waitKey()
 
-def displayTwoResults(wait, im1, im2, name):
+def displayTwoResults(wait, im1, im2, name='double_display'):
     
     numpy_horizontal = np.hstack((im1, im2))
     numpy_horizontal_concat = np.concatenate((im1, im2), axis=1)
@@ -243,11 +243,13 @@ def drawLargestContour(segmented) :
     cv2.drawContours(segmented, contours, max_index, (0,0,255))
 
     height, width = segmented.shape[:2]
-    blank_image = np.zeros((height,width,3), np.uint8)
+    primary_binary = np.zeros((height,width,3), np.uint8)
     
-    cv2.drawContours(blank_image, contours, max_index, (255,255,255), -1)
+    cv2.drawContours(primary_binary, contours, max_index, (255,255,255), -1)
 
-    return segmented, blank_image
+    primary_contour = contours[max_index]
+
+    return segmented, primary_binary, primary_contour
 
 def drawOverlappingOnBinary(binary, buslane, boxes) :
     overlapping = binary.copy()
@@ -272,6 +274,26 @@ def checkForOverlap(mask1, mask2) :
 
     return nnz > 0
 
+def displaySingle(image, name='single_display') :
+
+    cv2.namedWindow(name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(name, 1500, 800)
+    cv2.imshow(name, image)
+
+def extrapolateLaneAndDraw(image, contour) :
+    hull = []
+    hull.append(cv2.convexHull(contour))
+    cv2.polylines(image, hull, True, (0, 0, 230), 3)
+    # cv2.drawContours(image, hull, -1, (0, 0, 255), -1)
+    return image
+
+def binaryOfThisSize(image) :
+    height, width = image.shape[:2]
+    black_im = np.zeros((height,width,3), np.uint8)
+    
+    ret,binary = cv2.threshold(black_im,127,255,cv2.THRESH_BINARY)
+
+    return binary
 
 def processVideo(yolo_instance, sess, network, net_input, label_values):
 
@@ -292,34 +314,38 @@ def processVideo(yolo_instance, sess, network, net_input, label_values):
             success = False
             break
         
-        
         segmentation_result = predictOnFrame(sess, network, net_input, frame, label_values)
-        seg_contour, primary_contour = drawLargestContour(segmentation_result)
-        resized_contour = cv2.resize(primary_contour, frame.shape[0:2][::-1]) 
+        seg_contour, primary_binary, primary_contour = drawLargestContour(segmentation_result)
+
+        resized_lane_binary = cv2.resize(primary_binary, frame.shape[0:2][::-1]) 
         resized_seg = cv2.resize(seg_contour, frame.shape[0:2][::-1]) 
 
-        height, width = frame.shape[:2]
-        blank_image = np.zeros((height,width,3), np.uint8)
+        boxes_binary = binaryOfThisSize(frame)
+
+        segmentation_overlay = combineFrameAndLabels(frame, seg_contour)
+
+        frame_seg_size = cv2.resize(frame, segmentation_result.shape[0:2][::-1]) 
+        lane_prediction = extrapolateLaneAndDraw(frame_seg_size, primary_contour)
+
         
-        ret,boxes_binary = cv2.threshold(blank_image,127,255,cv2.THRESH_BINARY)
 
-        # segmentation_overlay = combineFrameAndLabels(frame, seg_contour)
-        yolo_result, out_boxes = yolo_instance.detect_image(Image.fromarray(frame), True)
+        # lane_overlay = combineFrameAndLabels(frame, lane_prediction)
 
-        binary_boxes = drawOverlappingOnBinary(boxes_binary, resized_contour, out_boxes)
+        displaySingle(lane_prediction)
+
+        # yolo_result, out_boxes = yolo_instance.detect_image(Image.fromarray(frame), True)
+
+        # binary_boxes = drawOverlappingOnBinary(boxes_binary, resized_contour, out_boxes)
 
         # everything = combineFrameAndLabels(np.array(yolo_result) , segmentation_overlay)
-        everything_boxes = combineFrameAndLabels(np.array(yolo_result) , binary_boxes )
+        # everything_boxes = combineFrameAndLabels(np.array(yolo_result) , binary_boxes )
 
-        cv2.namedWindow('final', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('final', 1500, 800)
-        cv2.imshow('final', everything_boxes)
+        # displaySingle(everything_boxes)
 
         # cv2.imshow('everything', everything_boxes)
-        # displayTwoResults(False, segmentation_overlay, everything_boxes, 'display')
-        # displayResults(True, frame, seg_contour, yolo_result, everything)
+        # displayTwoResults(False, segmentation_overlay, lane_prediction)
 
-        results_video.write(everything_boxes)
+        # results_video.write(everything_boxes)
 
     print("Completed Video")
     return
