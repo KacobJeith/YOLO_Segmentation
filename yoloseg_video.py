@@ -192,16 +192,36 @@ def instantiate():
 ########## YOLOSEG FUNCTIONS 
 ################################################################################################################################
 
-def displayResults(wait, im1, im2):
+def displayFourResults(wait, im1, im2, im3, im4):
     
     numpy_horizontal = np.hstack((im1, im2))
     numpy_horizontal_concat = np.concatenate((im1, im2), axis=1)
+    
+    numpy_horizontal_row2 = np.hstack((im3, im4))
+    numpy_horizontal_concat_row2 = np.concatenate((im3, im4), axis=1)
+
+    numpy_giant = np.vstack((numpy_horizontal_concat, numpy_horizontal_concat_row2))
+    numpy_giant_concat = np.concatenate((numpy_horizontal_concat, numpy_horizontal_concat_row2), axis=2)
+
     cv2.namedWindow('display', cv2.WINDOW_NORMAL)
-    cv2.resizeWindow('display', 2000, 800)
-    cv2.imshow('display', numpy_horizontal_concat)
+    cv2.resizeWindow('display', 1600, 1000)
+    cv2.imshow('display', numpy_giant_concat)
 
     if wait :
         cv2.waitKey()
+
+def displayTwoResults(wait, im1, im2, name):
+    
+    numpy_horizontal = np.hstack((im1, im2))
+    numpy_horizontal_concat = np.concatenate((im1, im2), axis=1)
+    
+    cv2.namedWindow(name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(name, 1600, 500)
+    cv2.imshow(name, numpy_horizontal_concat)
+
+    if wait :
+        cv2.waitKey()
+
 
 def drawLargestContour(segmented) :
     
@@ -220,12 +240,37 @@ def drawLargestContour(segmented) :
             mx_area = area
             max_index = index
 
-    # x,y,w,h = mx
     cv2.drawContours(segmented, contours, max_index, (0,0,255))
 
-    # cv2.rectangle(segmented,(x,y),(x+w,y+h),(200,0,0),2)
+    height, width = segmented.shape[:2]
+    blank_image = np.zeros((height,width,3), np.uint8)
+    
+    cv2.drawContours(blank_image, contours, max_index, (255,255,255), -1)
 
-    return segmented
+    return segmented, blank_image
+
+def drawOverlappingOnBinary(binary, buslane, boxes) :
+    overlapping = binary.copy()
+
+    for box in boxes :
+        top, left, bottom, right = box
+
+        thisBox = binary.copy()
+        cv2.rectangle(thisBox,(left,top),(right,bottom),(255,255,255),3)
+
+        if checkForOverlap(buslane, thisBox) :
+            cv2.rectangle(overlapping,(left,top),(right,bottom),(210,210,210),-1)
+
+    return overlapping
+
+def checkForOverlap(mask1, mask2) :
+    ret,bw1 = cv2.threshold(mask1,127,255,cv2.THRESH_BINARY)
+    ret,bw2 = cv2.threshold(mask2,127,255,cv2.THRESH_BINARY)
+    test = bw1 & bw2
+    gray_image = cv2.cvtColor(test, cv2.COLOR_BGR2GRAY)
+    nnz = cv2.countNonZero(gray_image)
+
+    return nnz > 0
 
 
 def processVideo(yolo_instance, sess, network, net_input, label_values):
@@ -234,7 +279,7 @@ def processVideo(yolo_instance, sess, network, net_input, label_values):
     results_video, length = initializeVideo(cap)
     bar = startProgressBar(length)
 
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 2500)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 500)
     success, frame = cap.read()
 
     frameIndex = 0
@@ -247,17 +292,34 @@ def processVideo(yolo_instance, sess, network, net_input, label_values):
             success = False
             break
         
-        segmentation_result = predictOnFrame(sess, network, net_input, frame, label_values)
-        seg_bound = drawLargestContour(segmentation_result)
-
-        segmentation_overlay = combineFrameAndLabels(frame, seg_bound)
-        # yolo_result = yolo_instance.detect_image(Image.fromarray(frame), True)
-
-        # everything = combineFrameAndLabels(np.array(yolo_result) , segmentation_result)
         
-        displayResults(True, frame, segmentation_overlay)
+        segmentation_result = predictOnFrame(sess, network, net_input, frame, label_values)
+        seg_contour, primary_contour = drawLargestContour(segmentation_result)
+        resized_contour = cv2.resize(primary_contour, frame.shape[0:2][::-1]) 
+        resized_seg = cv2.resize(seg_contour, frame.shape[0:2][::-1]) 
 
-        # results_video.write(yolo_result)
+        height, width = frame.shape[:2]
+        blank_image = np.zeros((height,width,3), np.uint8)
+        
+        ret,boxes_binary = cv2.threshold(blank_image,127,255,cv2.THRESH_BINARY)
+
+        # segmentation_overlay = combineFrameAndLabels(frame, seg_contour)
+        yolo_result, out_boxes = yolo_instance.detect_image(Image.fromarray(frame), True)
+
+        binary_boxes = drawOverlappingOnBinary(boxes_binary, resized_contour, out_boxes)
+
+        # everything = combineFrameAndLabels(np.array(yolo_result) , segmentation_overlay)
+        everything_boxes = combineFrameAndLabels(np.array(yolo_result) , binary_boxes )
+
+        cv2.namedWindow('final', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('final', 1500, 800)
+        cv2.imshow('final', everything_boxes)
+
+        # cv2.imshow('everything', everything_boxes)
+        # displayTwoResults(False, segmentation_overlay, everything_boxes, 'display')
+        # displayResults(True, frame, seg_contour, yolo_result, everything)
+
+        results_video.write(everything_boxes)
 
     print("Completed Video")
     return

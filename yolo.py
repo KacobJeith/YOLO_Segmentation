@@ -128,7 +128,7 @@ class YOLO(object):
         if drawBoxes :
             image = self.drawBoxesOnImage(image, out_boxes, out_scores, out_classes)
 
-        return image
+        return image, out_boxes
 
     def drawBoxesOnImage(self, image, out_boxes, out_scores, out_classes) :
         print('Found {} boxes for {}'.format(len(out_boxes), 'img'))
