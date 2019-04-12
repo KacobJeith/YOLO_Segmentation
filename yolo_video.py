@@ -76,4 +76,6 @@ def instantiate():
     else:
         print("Must specify at least video_input_path.  See usage with --help.")
 
-instantiate()
+
+if __name__ == '__main__':
+    instantiate()
