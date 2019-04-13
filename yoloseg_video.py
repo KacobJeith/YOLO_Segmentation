@@ -229,14 +229,11 @@ def drawLargestContour(segmented) :
     contours, hierarchy = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
     # Find object with the biggest bounding box
-    mx = (0,0,0,0)      # biggest bounding box so far
     mx_area = 0
     max_index = 0
     for index, cont in enumerate(contours):
-        x,y,w,h = cv2.boundingRect(cont)
-        area = w*h
-        if area > mx_area:
-            mx = x,y,w,h
+        area = cv2.contourArea(cont) 
+        if area > mx_area and area > 1:
             mx_area = area
             max_index = index
 
@@ -283,8 +280,8 @@ def displaySingle(image, name='single_display') :
 def extrapolateLaneAndDraw(image, contour) :
     hull = []
     hull.append(cv2.convexHull(contour))
-    cv2.polylines(image, hull, True, (0, 0, 230), 3)
-    # cv2.drawContours(image, hull, -1, (0, 0, 255), -1)
+    # cv2.polylines(image, hull, True, (0, 0, 230), 3)
+    cv2.drawContours(image, hull, -1, (255, 255, 255), -1)
     return image
 
 def binaryOfThisSize(image) :
@@ -324,14 +321,13 @@ def processVideo(yolo_instance, sess, network, net_input, label_values):
 
         segmentation_overlay = combineFrameAndLabels(frame, seg_contour)
 
-        frame_seg_size = cv2.resize(frame, segmentation_result.shape[0:2][::-1]) 
-        lane_prediction = extrapolateLaneAndDraw(frame_seg_size, primary_contour)
-
+        # frame_seg_size = cv2.resize(frame, segmentation_result.shape[0:2][::-1]) 
+        lane_binary = binaryOfThisSize(segmentation_result)
+        lane_prediction = extrapolateLaneAndDraw(lane_binary, primary_contour)
         
+        lane_overlay = combineFrameAndLabels(frame, lane_prediction)
 
-        # lane_overlay = combineFrameAndLabels(frame, lane_prediction)
-
-        displaySingle(lane_prediction)
+        displaySingle(lane_overlay)
 
         # yolo_result, out_boxes = yolo_instance.detect_image(Image.fromarray(frame), True)
 
