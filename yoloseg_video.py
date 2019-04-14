@@ -24,6 +24,7 @@ parser.add_argument('--crop_height', type=int, default=512, help='Height of crop
 parser.add_argument('--crop_width', type=int, default=512, help='Width of cropped input image to network')
 parser.add_argument('--model_segmentation', type=str, default="FC-DenseNet56", required=False, help='The model you are using')
 parser.add_argument('--dataset', type=str, default="MTA_segmentation_labels", required=False, help='The dataset you are using')
+parser.add_argument("--skip_frames", type=int, default=9, help="name of file containing labels")
 
 ################################################################################################################################
 ########## YOLO ARGUMENTS 
@@ -142,9 +143,9 @@ def checkForInterruption(success, cap, bar, results_video) :
     
     return False
 
-def incrementProgress(frameIndex, bar):
+def incrementProgress(frameIndex, bar, skip):
 
-    frameIndex += 1
+    frameIndex += skip + 1
     bar.update(frameIndex)
 
     return frameIndex
@@ -254,13 +255,22 @@ def drawOverlappingOnBinary(binary, buslane, boxes) :
     for box in boxes :
         top, left, bottom, right = box
 
-        thisBox = binary.copy()
-        cv2.rectangle(thisBox,(left,top),(right,bottom),(255,255,255),3)
+        thisObj_circ = binary.copy()
+        thisObj_rect = binary.copy()
+        cv2.rectangle(thisObj_rect,(left,top),(right,bottom),(255,255,255),3)
+        cv2.circle(thisObj_circ, (betweenTheseTwo(left, right),betweenTheseTwo(top, bottom)), int(0.8 * (right - left)/2 ), (255,255,255), -1)
 
-        if checkForOverlap(buslane, thisBox) :
+        thisObj = thisObj_circ & thisObj_rect
+
+        if checkForOverlap(buslane, thisObj) :
             cv2.rectangle(overlapping,(left,top),(right,bottom),(210,210,210),-1)
+            # overlapping += thisObj
+            # cv2.circle(overlapping, (betweenTheseTwo(left, right),betweenTheseTwo(top, bottom)), int((right - left)/2), (210,210,210), -1)
 
     return overlapping
+
+def betweenTheseTwo(val1, val2) :
+    return int(val1 + (val2 - val1)/2)
 
 def checkForOverlap(mask1, mask2) :
     ret,bw1 = cv2.threshold(mask1,127,255,cv2.THRESH_BINARY)
@@ -278,11 +288,46 @@ def displaySingle(image, name='single_display') :
     cv2.imshow(name, image)
 
 def extrapolateLaneAndDraw(image, contour) :
-    hull = []
-    hull.append(cv2.convexHull(contour))
-    # cv2.polylines(image, hull, True, (0, 0, 230), 3)
-    cv2.drawContours(image, hull, -1, (255, 255, 255), -1)
+    #### CONVEX HULL ####
+
+    area = cv2.contourArea(contour) 
+
+    if area > 2000 :
+
+        # hull = []
+        # hull.append(cv2.convexHull(contour))
+        hull = cv2.convexHull(contour)
+        cv2.drawContours(image, [hull], -1, (255, 255, 255), -1)
+
+        lane_target = getLaneTargetPoint(image, contour)
+        # lane_overlay = drawCircleAtPoint(lane_overlay, lane_target)
+
+        ## Extrapolate forward a bit ##
+        left, right, top, bottom = getExtremePoints(contour)
+        pts = np.array( [left, right, lane_target] )
+        image = cv2.fillPoly(image,[pts],(255,255,255))
+
+    #### Smallest Rectangle HULL ####
+
+    # rect = cv2.minAreaRect(contour)
+    # box = cv2.boxPoints(rect)
+    # box = np.int0(box)
+    # cv2.drawContours(image,[box],0,(255,0,0),2)
+
+
+    # #### FIT LINE ###
+
+    # rows,cols = image.shape[:2]
+    # [vx,vy,x,y] = cv2.fitLine(contour, cv2.DIST_L2,0,0.01,0.01)
+    # lefty = int((-x*vy/vx) + y)
+    # righty = int(((cols-x)*vy/vx)+y)
+    # image = cv2.line(image,(cols-1,righty),(0,lefty),(0,255,0),2)
+    
     return image
+
+def drawCircleAtPoint(image, point):
+    return cv2.circle(image,point, 20, (0,0,255), -1)
+
 
 def binaryOfThisSize(image) :
     height, width = image.shape[:2]
@@ -291,6 +336,34 @@ def binaryOfThisSize(image) :
     ret,binary = cv2.threshold(black_im,127,255,cv2.THRESH_BINARY)
 
     return binary
+
+def getCenterOfMass(contour) :
+    
+    M = cv2.moments(contour)
+    cx = int(M['m10']/M['m00'])
+    cy = int(M['m01']/M['m00'])
+
+    return cx, cy
+
+def getLaneTargetPoint(frame, contour):
+    cx, cy = getCenterOfMass(contour)
+
+    height, width, channels = frame.shape
+
+    frame_center_x = width/2
+    target_x = frame_center_x + (cx - frame_center_x)/2
+    target_y = cy / 3.5
+    lane_target = (round(target_x), round(target_y))
+
+    return lane_target
+    
+def getExtremePoints(c) :
+    left = tuple(c[c[:, :, 0].argmin()][0])
+    right = tuple(c[c[:, :, 0].argmax()][0])
+    top = tuple(c[c[:, :, 1].argmin()][0])
+    bottom = tuple(c[c[:, :, 1].argmax()][0])
+
+    return left, right, top, bottom
 
 def processVideo(yolo_instance, sess, network, net_input, label_values):
 
@@ -304,44 +377,48 @@ def processVideo(yolo_instance, sess, network, net_input, label_values):
     frameIndex = 0
 
     while success : 
-        frameIndex = incrementProgress(frameIndex, bar)
-        success, frame = cap.read()
 
         if checkForInterruption(success, cap, bar, results_video) : 
             success = False
             break
         
         segmentation_result = predictOnFrame(sess, network, net_input, frame, label_values)
-        seg_contour, primary_binary, primary_contour = drawLargestContour(segmentation_result)
+        segmentation_result_resized = cv2.resize(segmentation_result, frame.shape[0:2][::-1]) 
 
-        resized_lane_binary = cv2.resize(primary_binary, frame.shape[0:2][::-1]) 
-        resized_seg = cv2.resize(seg_contour, frame.shape[0:2][::-1]) 
+        resized_seg, resized_lane_binary, primary_contour = drawLargestContour(segmentation_result_resized)
+
+        # resized_lane_binary = cv2.resize(primary_binary, frame.shape[0:2][::-1]) 
+        # resized_seg = cv2.resize(seg_contour, frame.shape[0:2][::-1]) 
 
         boxes_binary = binaryOfThisSize(frame)
 
-        segmentation_overlay = combineFrameAndLabels(frame, seg_contour)
+        # segmentation_overlay = combineFrameAndLabels(frame, seg_contour)
 
         # frame_seg_size = cv2.resize(frame, segmentation_result.shape[0:2][::-1]) 
-        lane_binary = binaryOfThisSize(segmentation_result)
+        lane_binary = binaryOfThisSize(resized_seg)
         lane_prediction = extrapolateLaneAndDraw(lane_binary, primary_contour)
-        
+        # lane_prediction = cv2.resize(lane_prediction, frame.shape[0:2][::-1]) 
         lane_overlay = combineFrameAndLabels(frame, lane_prediction)
 
-        displaySingle(lane_overlay)
+        # displaySingle(lane_overlay)
 
-        # yolo_result, out_boxes = yolo_instance.detect_image(Image.fromarray(frame), True)
+        yolo_result, out_boxes = yolo_instance.detect_image(Image.fromarray(frame), True)
 
-        # binary_boxes = drawOverlappingOnBinary(boxes_binary, resized_contour, out_boxes)
+        binary_boxes = drawOverlappingOnBinary(boxes_binary, lane_prediction, out_boxes)
 
         # everything = combineFrameAndLabels(np.array(yolo_result) , segmentation_overlay)
-        # everything_boxes = combineFrameAndLabels(np.array(yolo_result) , binary_boxes )
+        everything_boxes = combineFrameAndLabels(np.array(yolo_result) , binary_boxes )
 
         # displaySingle(everything_boxes)
 
         # cv2.imshow('everything', everything_boxes)
-        # displayTwoResults(False, segmentation_overlay, lane_prediction)
+        displayTwoResults(False, lane_overlay, everything_boxes)
 
         # results_video.write(everything_boxes)
+
+        frameIndex = incrementProgress(frameIndex, bar, args.skip_frames)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frameIndex)
+        success,frame = cap.read()
 
     print("Completed Video")
     return
