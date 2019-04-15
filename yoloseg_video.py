@@ -129,7 +129,7 @@ def initializeVideo(cap) :
 
     filename = os.path.basename(args.video).split('.')[0]
     
-    results_video = cv2.VideoWriter(filename + '_buslane.mp4', cv2.VideoWriter_fourcc(*'avc1'), fps, (int(width),int(height)))
+    results_video = cv2.VideoWriter(filename + '_both.mp4', cv2.VideoWriter_fourcc(*'avc1'), fps, (int(width * 2),int(height)))
     return results_video, length
 
 def checkForInterruption(success, cap, bar, results_video) :
@@ -146,9 +146,13 @@ def checkForInterruption(success, cap, bar, results_video) :
 def incrementProgress(frameIndex, bar, skip):
 
     frameIndex += skip + 1
-    bar.update(frameIndex)
-
-    return frameIndex
+    
+    try:
+        bar.update(frameIndex)
+        return frameIndex
+    except:
+        bar.finish()
+        return frameIndex
 
 
 ################################################################################################################################
@@ -222,6 +226,8 @@ def displayTwoResults(wait, im1, im2, name='double_display'):
 
     if wait :
         cv2.waitKey()
+    
+    return numpy_horizontal_concat
 
 
 def drawLargestContour(segmented) :
@@ -249,7 +255,7 @@ def drawLargestContour(segmented) :
 
     return segmented, primary_binary, primary_contour
 
-def drawOverlappingOnBinary(binary, buslane, boxes) :
+def drawOverlappingOnBinary(binary, buslane, boxes, lane_roi_contour) :
     overlapping = binary.copy()
 
     for box in boxes :
@@ -258,16 +264,39 @@ def drawOverlappingOnBinary(binary, buslane, boxes) :
         thisObj_circ = binary.copy()
         thisObj_rect = binary.copy()
         cv2.rectangle(thisObj_rect,(left,top),(right,bottom),(255,255,255),3)
-        cv2.circle(thisObj_circ, (betweenTheseTwo(left, right),betweenTheseTwo(top, bottom)), int(0.8 * (right - left)/2 ), (255,255,255), -1)
+        center_point = (betweenTheseTwo(left, right),betweenTheseTwo(top, bottom))
+        radius_hor = int(0.7 * (right - left)/2 )
+        radius_ver = int(0.7 * (bottom - top)/2 )
+        
+        #hor circle
+        # cv2.circle(thisObj_circ, center_point , radius_hor, (255,255,255), -1)
+        # cv2.circle(thisObj_circ, center_point , radius_ver, (255,255,255), -1)
+        # cv2.EllipseBox(thisObj_circ, box, color, thickness=1, lineType=8, shift=0)
+        cv2.rectangle(thisObj_circ,(left,top),(right,bottom),(210,210,210),-1)
 
-        thisObj = thisObj_circ & thisObj_rect
+        thisObj = thisObj_circ #& thisObj_rect
 
         if checkForOverlap(buslane, thisObj) :
-            cv2.rectangle(overlapping,(left,top),(right,bottom),(210,210,210),-1)
+            if checkPointsInROI(lane_roi_contour, box) > 1:
+                cv2.rectangle(overlapping,(left,top),(right,bottom),(210,210,210),-1)
             # overlapping += thisObj
             # cv2.circle(overlapping, (betweenTheseTwo(left, right),betweenTheseTwo(top, bottom)), int((right - left)/2), (210,210,210), -1)
 
     return overlapping
+
+def checkPointsInROI(lane_roi_contour, box) :
+    top, left, bottom, right = box
+    included = 0
+    points = [(top,left), (top,right), (bottom, left), (bottom, right)]
+
+    for point in points :
+        if cv2.pointPolygonTest(lane_roi_contour, point, False) >= 0:
+            included += 1
+    
+    print('points included: ', included)
+
+    return included
+
 
 def betweenTheseTwo(val1, val2) :
     return int(val1 + (val2 - val1)/2)
@@ -291,39 +320,43 @@ def extrapolateLaneAndDraw(image, contour) :
     #### CONVEX HULL ####
 
     area = cv2.contourArea(contour) 
+    imageWithTriangle = image.copy()
 
     if area > 2000 :
 
-        # hull = []
-        # hull.append(cv2.convexHull(contour))
         hull = cv2.convexHull(contour)
         cv2.drawContours(image, [hull], -1, (255, 255, 255), -1)
 
         lane_target = getLaneTargetPoint(image, contour)
-        # lane_overlay = drawCircleAtPoint(lane_overlay, lane_target)
 
         ## Extrapolate forward a bit ##
         left, right, top, bottom = getExtremePoints(contour)
         pts = np.array( [left, right, lane_target] )
-        image = cv2.fillPoly(image,[pts],(255,255,255))
-
-    #### Smallest Rectangle HULL ####
-
-    # rect = cv2.minAreaRect(contour)
-    # box = cv2.boxPoints(rect)
-    # box = np.int0(box)
-    # cv2.drawContours(image,[box],0,(255,0,0),2)
-
-
-    # #### FIT LINE ###
-
-    # rows,cols = image.shape[:2]
-    # [vx,vy,x,y] = cv2.fitLine(contour, cv2.DIST_L2,0,0.01,0.01)
-    # lefty = int((-x*vy/vx) + y)
-    # righty = int(((cols-x)*vy/vx)+y)
-    # image = cv2.line(image,(cols-1,righty),(0,lefty),(0,255,0),2)
+        imageWithTriangle = cv2.fillPoly(imageWithTriangle,[pts],(255,255,255))
     
-    return image
+    return imageWithTriangle, image
+
+def drawLaneROIMask(binary) :
+
+    
+    height, width = binary.shape[:2]
+
+    bottomMargin = round(height - height/2) + 200
+
+    bottomLeft = (0, height)
+    bottomUpper = (0, bottomMargin)
+
+    topMargin = 100
+    topLeft = (round(width/2 - topMargin), 0)
+    topRight = (round(width/2 + topMargin), 0)
+    bottomRightUpper = (width,bottomMargin)
+    bottomRight = (width, height)
+
+    pts = np.array( [bottomLeft, bottomUpper, topLeft,topRight, bottomRightUpper, bottomRight ] )
+    
+    binaryROI = cv2.fillPoly(binary,[pts],(255,255,255))
+
+    return binaryROI
 
 def drawCircleAtPoint(image, point):
     return cv2.circle(image,point, 20, (0,0,255), -1)
@@ -351,8 +384,11 @@ def getLaneTargetPoint(frame, contour):
     height, width, channels = frame.shape
 
     frame_center_x = width/2
-    target_x = frame_center_x + (cx - frame_center_x)/2
-    target_y = cy / 3.5
+    target_x = betweenTheseTwo(frame_center_x, frame_center_x + (cx - frame_center_x)/2)
+    # target_y = betweenTheseTwo(betweenTheseTwo(height/6, cy) , height/6)
+    left, right, top, bottom = getExtremePoints(contour)
+    target_y = height/8 #betweenTheseTwo(betweenTheseTwo(top[1], height/7), height/7)
+    
     lane_target = (round(target_x), round(target_y))
 
     return lane_target
@@ -376,6 +412,15 @@ def processVideo(yolo_instance, sess, network, net_input, label_values):
 
     frameIndex = 0
 
+
+    laneroimask = binaryOfThisSize(frame)
+    laneroimask = drawLaneROIMask(laneroimask)
+    # _ , binary = cv2.threshold(laneroimask,127,255,cv2.THRESH_BINARY)
+    binary = cv2.cvtColor(laneroimask, cv2.COLOR_BGR2GRAY)
+    lane_roi_contour, _ = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+    lane_roi_contour = lane_roi_contour[0]
+
     while success : 
 
         if checkForInterruption(success, cap, bar, results_video) : 
@@ -396,15 +441,15 @@ def processVideo(yolo_instance, sess, network, net_input, label_values):
 
         # frame_seg_size = cv2.resize(frame, segmentation_result.shape[0:2][::-1]) 
         lane_binary = binaryOfThisSize(resized_seg)
-        lane_prediction = extrapolateLaneAndDraw(lane_binary, primary_contour)
+        lane_prediction, only_original_prediction = extrapolateLaneAndDraw(lane_binary, primary_contour)
         # lane_prediction = cv2.resize(lane_prediction, frame.shape[0:2][::-1]) 
-        lane_overlay = combineFrameAndLabels(frame, lane_prediction)
+        lane_overlay = combineFrameAndLabels(frame, only_original_prediction)
 
         # displaySingle(lane_overlay)
 
         yolo_result, out_boxes = yolo_instance.detect_image(Image.fromarray(frame), True)
 
-        binary_boxes = drawOverlappingOnBinary(boxes_binary, lane_prediction, out_boxes)
+        binary_boxes = drawOverlappingOnBinary(boxes_binary, lane_prediction, out_boxes, lane_roi_contour)
 
         # everything = combineFrameAndLabels(np.array(yolo_result) , segmentation_overlay)
         everything_boxes = combineFrameAndLabels(np.array(yolo_result) , binary_boxes )
@@ -412,9 +457,9 @@ def processVideo(yolo_instance, sess, network, net_input, label_values):
         # displaySingle(everything_boxes)
 
         # cv2.imshow('everything', everything_boxes)
-        displayTwoResults(False, lane_overlay, everything_boxes)
+        combined = displayTwoResults(False, lane_overlay, everything_boxes)
 
-        # results_video.write(everything_boxes)
+        results_video.write(combined)
 
         frameIndex = incrementProgress(frameIndex, bar, args.skip_frames)
         cap.set(cv2.CAP_PROP_POS_FRAMES, frameIndex)
