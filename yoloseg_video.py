@@ -279,6 +279,9 @@ def drawOverlappingOnBinary(binary, buslane, boxes, lane_roi_contour) :
         if checkForOverlap(buslane, thisObj) :
             if checkPointsInROI(lane_roi_contour, box) > 1:
                 cv2.rectangle(overlapping,(left,top),(right,bottom),(210,210,210),-1)
+            else :
+                cv2.rectangle(overlapping,(left,top),(right,bottom),(50,50,50),-1)
+
             # overlapping += thisObj
             # cv2.circle(overlapping, (betweenTheseTwo(left, right),betweenTheseTwo(top, bottom)), int((right - left)/2), (210,210,210), -1)
 
